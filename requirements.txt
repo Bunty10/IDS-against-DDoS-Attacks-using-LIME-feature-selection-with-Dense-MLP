@@ -1,0 +1,24 @@
+# ============================================================================
+#  IDS DDoS Detection System — Python Dependencies
+#  Install:  pip install -r requirements.txt
+# ============================================================================
+
+# ── Core ML & Data ────────────────────────────────────────────────────────
+scikit-learn>=1.3.0
+pandas>=2.0.0
+numpy>=1.24.0
+joblib>=1.3.0
+
+# ── Visualization ─────────────────────────────────────────────────────────
+matplotlib>=3.7.0
+
+# ── Web GUI ───────────────────────────────────────────────────────────────
+flask>=3.0.0
+
+# ── Deep Learning (exact notebook architecture with BatchNormalization
+#    and Dropout; system auto-falls back to sklearn if not installed) ───────
+# tensorflow>=2.13.0
+
+# ── Optional: used in the original notebook but NOT required here ─────────
+# psutil>=5.9.0         # memory profiling during training
+# xlwings>=0.30.0       # Excel output (notebook only, replaced by web GUI)

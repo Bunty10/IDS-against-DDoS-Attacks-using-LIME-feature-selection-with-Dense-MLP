@@ -1,0 +1,1845 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IDS — DDoS Detection</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.27.1/plotly.min.js"></script>
+<style>
+/* ── Reset ──────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* ── Design tokens ──────────────────────────────────────────────────── */
+:root {
+  --bg:        #EAE6DF;
+  --surface:   #FFFFFF;
+  --surface2:  #F5F0E8;
+  --surface3:  #EDE8E0;
+  --border:    rgba(0,0,0,0.09);
+  --border2:   rgba(0,0,0,0.16);
+  --blue:      #4A9DC0;
+  --blue-dim:  rgba(74,157,192,0.12);
+  --blue-line: #4A9DC0;
+  --green:     #1E7A42;
+  --green-dim: rgba(30,122,66,0.1);
+  --red:       #C94B2A;
+  --red-dim:   rgba(201,75,42,0.1);
+  --amber:     #D4A017;
+  --amber-dim: rgba(212,160,23,0.12);
+  --sky:       #4A9DC0;
+  --sky-dim:   rgba(74,157,192,0.1);
+  --txt1:      #1A2332;
+  --txt2:      #3D5A80;
+  --txt3:      #7A8FA6;
+  --mono: 'Cascadia Code', 'Fira Code', monospace;
+  --sans: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --r: 6px;
+}
+
+html { font-size: 14px; }
+body {
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--txt1);
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ══ SIDEBAR ════════════════════════════════════════════════════════════ */
+.sidebar {
+  width: 208px;
+  min-width: 208px;
+  background: #0D1F3C;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid rgba(255,255,255,0.08);
+  overflow: hidden;
+}
+
+.sidebar-logo {
+  padding: 20px 16px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sidebar-logo svg {
+  flex-shrink: 0;
+  color: #4A9DC0;
+}
+
+.sidebar-logo-text h1 {
+  font-size: 13px;
+  font-weight: 700;
+  color: #FFFFFF;
+  letter-spacing: -0.01em;
+  line-height: 1;
+}
+
+.sidebar-logo-text p {
+  font-size: 10px;
+  color: rgba(255,255,255,0.45);
+  margin-top: 2px;
+  font-family: var(--mono);
+  letter-spacing: 0.02em;
+}
+
+nav {
+  flex: 1;
+  padding: 8px 0;
+  overflow-y: auto;
+}
+
+.nav-btn {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-left: 2px solid transparent;
+  color: rgba(255,255,255,0.55);
+  font: 500 12.5px var(--sans);
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  letter-spacing: 0.01em;
+}
+
+.nav-btn svg {
+  flex-shrink: 0;
+  opacity: 0.6;
+  transition: opacity 120ms ease;
+}
+
+.nav-btn:hover {
+  background: rgba(255,255,255,0.07);
+  color: rgba(255,255,255,0.9);
+}
+
+.nav-btn:hover svg { opacity: 0.9; }
+
+.nav-btn.active {
+  background: rgba(74,157,192,0.18);
+  color: #7DC4E0;
+  border-left-color: #4A9DC0;
+  font-weight: 600;
+}
+
+.nav-btn.active svg { opacity: 1; color: #7DC4E0; }
+
+.sidebar-footer {
+  padding: 12px 14px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  font-size: 10px;
+  color: rgba(255,255,255,0.3);
+  font-family: var(--mono);
+}
+
+/* ══ MAIN ════════════════════════════════════════════════════════════════ */
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.page {
+  display: none;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px 28px 32px;
+}
+
+.page.active { display: flex; flex-direction: column; }
+
+/* Direct children must not shrink — otherwise flex compresses them
+   instead of letting the page scroll. */
+.page.active > * { flex-shrink: 0; }
+
+.page::-webkit-scrollbar { width: 6px; }
+.page::-webkit-scrollbar-track { background: transparent; }
+.page::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.25); border-radius: 3px; }
+.page::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.4); }
+
+/* ── Page header ───────────────────────────────────────────────────── */
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.page-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--txt1);
+  letter-spacing: -0.01em;
+}
+
+/* ── Section label ─────────────────────────────────────────────────── */
+.section-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--txt3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 20px 0 10px;
+}
+
+/* ── Stat row ──────────────────────────────────────────────────────── */
+.stat-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.stat-card {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 14px 16px;
+}
+
+.stat-card .lbl {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--txt3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.stat-card .val {
+  font-size: 26px;
+  font-weight: 700;
+  margin-top: 4px;
+  font-family: var(--mono);
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+.c-sky   { color: var(--sky);   }
+.c-green { color: var(--green); }
+.c-rust  { color: var(--red);   }
+.c-amber { color: var(--amber); }
+.c-navy  { color: var(--blue);  }
+
+/* ── Buttons ────────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  border-radius: 5px;
+  padding: 0 13px;
+  height: 32px;
+  font: 600 12px var(--sans);
+  cursor: pointer;
+  letter-spacing: 0.01em;
+  transition: opacity 120ms var(--ease-out), transform 120ms var(--ease-out);
+  white-space: nowrap;
+}
+
+.btn:hover:not(:disabled) {
+  opacity: 0.85;
+  transform: translateY(-1px);
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
+  opacity: 1;
+  transition-duration: 80ms;
+}
+
+.btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.btn-green { background: #1E7A42; color: #fff; }
+.btn-rust  { background: var(--red);   color: #fff; }
+.btn-amber { background: var(--amber); color: #fff; }
+.btn-sky   { background: var(--sky);   color: #fff; }
+.btn-navy  { background: #0D1F3C; color: #fff; border: none; }
+
+.btn-row {
+  display: flex;
+  gap: 7px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+/* ── Status pill ────────────────────────────────────────────────────── */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-family: var(--mono);
+}
+
+.status-idle    { background: rgba(255,255,255,0.06); color: var(--txt2); }
+.status-running { background: var(--green-dim); color: var(--green); }
+.status-stopped { background: var(--red-dim); color: var(--red); }
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dot-idle    { background: var(--txt3); }
+.dot-running { background: var(--green); animation: pulse 1.4s ease-in-out infinite; }
+.dot-stopped { background: var(--red); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.4; transform: scale(0.85); }
+}
+
+/* ── Offline banner ─────────────────────────────────────────────────── */
+.offline-banner {
+  background: rgba(245,158,11,0.08);
+  border: 1px solid rgba(245,158,11,0.25);
+  border-radius: var(--r);
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--amber);
+  display: none;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 14px;
+}
+
+.offline-banner svg { flex-shrink: 0; }
+
+/* ── Chart wrap ─────────────────────────────────────────────────────── */
+.chart-wrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 14px 16px 10px;
+  margin-bottom: 14px;
+  position: relative;
+}
+
+.chart-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.chart-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--txt2);
+  letter-spacing: 0.01em;
+}
+
+.chart-subtitle {
+  font-size: 11px;
+  color: var(--txt3);
+  font-family: var(--mono);
+}
+
+.chart-div { width: 100%; height: 300px; }
+
+/* ── Traffic table ──────────────────────────────────────────────────── */
+.table-wrap {
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  overflow: auto;
+  min-height: 200px;
+  max-height: 400px;
+  background: var(--surface);
+}
+
+table.traffic {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+  font-family: var(--mono);
+}
+
+table.traffic th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #E8E3DB;
+  color: var(--txt3);
+  font: 600 10px var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 9px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--border2);
+  white-space: nowrap;
+}
+
+table.traffic td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--txt2);
+  white-space: nowrap;
+}
+
+table.traffic tr:hover td { background: rgba(74,157,192,0.06); color: var(--txt1); }
+
+/* ── In-header column filters ───────────────────────────────────────── */
+table.traffic tr.filter-row th {
+  padding: 5px 6px;
+  background: #E8E3DB;
+  border-bottom: 1px solid var(--border2);
+}
+
+.th-filter {
+  display: block;
+  width: 100%;
+  background: rgba(255,255,255,0.7);
+  border: 1px solid rgba(0,0,0,0.12);
+  border-radius: 4px;
+  color: var(--txt1);
+  font: 400 11px var(--mono);
+  padding: 3px 7px;
+  outline: none;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.th-filter::placeholder { color: var(--txt3); }
+
+.th-filter:focus {
+  border-color: rgba(74,157,192,0.6);
+  background: rgba(255,255,255,0.95);
+}
+
+.th-check-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  color: var(--txt3);
+  font: 500 10px var(--sans);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.th-check-wrap input[type="checkbox"] {
+  accent-color: var(--red);
+  width: 12px;
+  height: 12px;
+  cursor: pointer;
+}
+
+.filter-count {
+  font-size: 10px;
+  color: var(--txt3);
+  display: block;
+  margin-top: 3px;
+  font-family: var(--mono);
+}
+
+/* ── Tags / prediction labels ───────────────────────────────────────── */
+.tag {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 3px;
+  font: 600 10.5px var(--mono);
+  letter-spacing: 0.04em;
+}
+
+.tag-normal { background: var(--green-dim); color: var(--green); }
+.tag-attack { background: var(--red-dim);   color: var(--red);   }
+.tag-benign { background: var(--green-dim); color: var(--green); }
+.tag-ddos   { background: var(--red-dim);   color: var(--red);   }
+
+/* ── Upload zone ────────────────────────────────────────────────────── */
+.upload-zone {
+  border: 2px dashed rgba(255,255,255,0.12);
+  border-radius: 8px;
+  padding: 36px 24px;
+  text-align: center;
+  color: var(--txt3);
+  cursor: pointer;
+  margin-bottom: 14px;
+  background: var(--surface);
+  transition: border-color 180ms ease, background 180ms ease;
+}
+
+.upload-zone:hover {
+  border-color: rgba(59,130,246,0.4);
+  background: rgba(59,130,246,0.04);
+  color: var(--txt2);
+}
+
+.upload-zone input { display: none; }
+
+.upload-icon {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 10px;
+  color: var(--txt3);
+}
+
+.upload-zone .upload-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--txt2);
+  margin-bottom: 5px;
+}
+
+.upload-zone .upload-hint {
+  font-size: 11px;
+  color: var(--txt3);
+  font-family: var(--mono);
+}
+
+/* ── File loaded badge ──────────────────────────────────────────────── */
+.file-badge {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 9px 14px;
+  font-size: 12px;
+  color: var(--txt2);
+  margin-bottom: 14px;
+}
+
+.file-badge svg { color: var(--blue); flex-shrink: 0; }
+.file-badge strong { color: var(--txt1); font-family: var(--mono); font-size: 12px; }
+.file-badge .file-rows { color: var(--txt3); font-family: var(--mono); font-size: 11px; }
+
+/* ── Spinner ────────────────────────────────────────────────────────── */
+.spinner-wrap {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 28px;
+  color: var(--txt2);
+  font-size: 12.5px;
+}
+
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border2);
+  border-top-color: var(--blue);
+  border-radius: 50%;
+  animation: spin 0.65s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Metrics grid ───────────────────────────────────────────────────── */
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: 8px;
+  margin: 12px 0 14px;
+}
+
+.metric-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 10px 12px;
+  text-align: center;
+}
+
+.metric-box .m-lbl {
+  font-size: 9.5px;
+  font-weight: 600;
+  color: var(--txt3);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.metric-box .m-val {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--amber);
+  margin-top: 4px;
+  font-family: var(--mono);
+  letter-spacing: -0.02em;
+}
+
+/* ── Analysis controls ──────────────────────────────────────────────── */
+.analysis-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+}
+
+.ctrl-lbl {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--txt3);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  margin-right: 2px;
+}
+
+.analysis-progress {
+  font-size: 11px;
+  color: var(--txt3);
+  font-family: var(--mono);
+  margin-left: 4px;
+}
+
+/* ── Plots grid ─────────────────────────────────────────────────────── */
+.plots-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+@media (max-width: 700px) { .plots-grid { grid-template-columns: 1fr; } }
+
+.plots-grid img {
+  width: 100%;
+  border-radius: var(--r);
+  border: 1px solid var(--border);
+  display: block;
+}
+
+/* ── Info table ─────────────────────────────────────────────────────── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+
+.info-table { width: 100%; border-collapse: collapse; }
+
+.info-table td {
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+  vertical-align: top;
+  line-height: 1.5;
+}
+
+.info-table tr:last-child td { border-bottom: none; }
+
+.info-table td:first-child {
+  color: var(--txt3);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  width: 180px;
+  white-space: nowrap;
+  padding-top: 11px;
+}
+
+.info-table td:last-child { color: var(--txt2); font-family: var(--mono); font-size: 11.5px; }
+
+/* ── Summary confusion matrix ───────────────────────────────────────── */
+.conf-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.conf-box {
+  flex: 1;
+  min-width: 60px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 8px 10px;
+  text-align: center;
+}
+
+.conf-box .c-lbl {
+  font-size: 9.5px;
+  font-weight: 600;
+  color: var(--txt3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.conf-box .c-val {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--txt1);
+  font-family: var(--mono);
+  margin-top: 3px;
+  letter-spacing: -0.02em;
+}
+
+/* ── Notices ────────────────────────────────────────────────────────── */
+.save-notice {
+  background: rgba(59,130,246,0.07);
+  border: 1px solid rgba(59,130,246,0.2);
+  border-radius: var(--r);
+  padding: 11px 14px;
+  font-size: 12px;
+  color: var(--sky);
+  margin-top: 10px;
+  display: none;
+  line-height: 1.6;
+}
+
+.save-notice code {
+  font-family: var(--mono);
+  background: rgba(255,255,255,0.08);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+  color: var(--txt1);
+}
+
+.info-notice {
+  background: rgba(245,158,11,0.07);
+  border: 1px solid rgba(245,158,11,0.2);
+  border-radius: var(--r);
+  padding: 8px 12px;
+  font-size: 11.5px;
+  color: var(--amber);
+  margin-bottom: 10px;
+  font-family: var(--mono);
+}
+
+.empty-state {
+  color: var(--txt3);
+  text-align: center;
+  padding: 32px 16px;
+  font-size: 13px;
+}
+
+/* ── Section label for ML info ──────────────────────────────────────── */
+.section-title {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--txt3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 20px 0 8px;
+}
+
+/* ── Downsample notice ──────────────────────────────────────────────── */
+#csv-downsample-notice { display: none; }
+</style>
+</head>
+<body>
+
+<!-- ═══ SIDEBAR ══════════════════════════════════════════════════════════ -->
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+    </svg>
+    <div class="sidebar-logo-text">
+      <h1>IDS Monitor</h1>
+      <p>Dense MLP · DDoS</p>
+    </div>
+  </div>
+
+  <nav>
+    <button class="nav-btn" data-page="home">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+      </svg>
+      Live Traffic
+    </button>
+    <button class="nav-btn" data-page="upload">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/>
+        <line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      Upload CSV
+    </button>
+    <button class="nav-btn" data-page="summary">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="18" y1="20" x2="18" y2="10"/>
+        <line x1="12" y1="20" x2="12" y2="4"/>
+        <line x1="6"  y1="20" x2="6"  y2="14"/>
+      </svg>
+      Summary
+    </button>
+    <button class="nav-btn" data-page="mlinfo">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4" y="4" width="16" height="16" rx="2"/>
+        <rect x="9" y="9" width="6" height="6"/>
+        <line x1="9" y1="1" x2="9" y2="4"/>
+        <line x1="15" y1="1" x2="15" y2="4"/>
+        <line x1="9" y1="20" x2="9" y2="23"/>
+        <line x1="15" y1="20" x2="15" y2="23"/>
+        <line x1="20" y1="9" x2="23" y2="9"/>
+        <line x1="20" y1="14" x2="23" y2="14"/>
+        <line x1="1" y1="9" x2="4" y2="9"/>
+        <line x1="1" y1="14" x2="4" y2="14"/>
+      </svg>
+      ML Information
+    </button>
+  </nav>
+
+  <div class="sidebar-footer">v1.0 · Binary classifier</div>
+</aside>
+
+<!-- ═══ PAGES ════════════════════════════════════════════════════════════ -->
+<div class="main">
+
+<!-- ─── PAGE 1 : LIVE TRAFFIC ─────────────────────────────────────────── -->
+<div id="page-home" class="page">
+
+  <div class="page-header">
+    <h2 class="page-title">Live Traffic Monitor</h2>
+    <span id="cap-status-pill" class="status-pill status-idle">
+      <span class="dot dot-idle" id="cap-dot"></span>
+      <span id="cap-status-txt">Idle</span>
+    </span>
+  </div>
+
+  <div class="offline-banner" id="offline-banner" style="display:none">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="1" y1="1" x2="23" y2="23"/>
+      <path d="M16.72 11.06A10.94 10.94 0 0119 12.55M5 12.55a10.94 10.94 0 015.17-2.39M10.71 5.05A16 16 0 0122.56 9M1.42 9a15.91 15.91 0 014.7-2.88M8.53 16.11a6 6 0 016.95 0M12 20h.01"/>
+    </svg>
+    <span><strong>No connection.</strong> Live capture requires an active network connection.</span>
+  </div>
+
+  <div class="stat-row">
+    <div class="stat-card">
+      <div class="lbl">Total</div>
+      <div class="val c-sky" id="st-total">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="lbl">Normal</div>
+      <div class="val c-green" id="st-normal">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="lbl">Attack</div>
+      <div class="val c-rust" id="st-attack">0</div>
+    </div>
+  </div>
+
+  <div class="btn-row">
+    <button class="btn btn-green" id="btn-start" onclick="captureStart()">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+        <polygon points="5 3 19 12 5 21 5 3"/>
+      </svg>
+      Start Capturing
+    </button>
+    <button class="btn btn-rust" id="btn-stop" onclick="captureStop()" disabled>
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
+        <rect x="3" y="3" width="18" height="18" rx="2"/>
+      </svg>
+      Stop Capturing
+    </button>
+    <button class="btn btn-navy" id="btn-save" onclick="captureSave()">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/>
+        <polyline points="17 21 17 13 7 13 7 21"/>
+        <polyline points="7 3 7 8 15 8"/>
+      </svg>
+      Save &amp; Export
+    </button>
+  </div>
+
+  <div class="save-notice" id="save-notice"></div>
+
+  <div class="chart-wrap">
+    <div class="chart-header">
+      <span class="chart-title">Flow Packets/s — Live</span>
+      <span class="chart-subtitle" id="live-chart-subtitle"></span>
+    </div>
+    <div id="live-chart-div" class="chart-div"></div>
+  </div>
+
+  <div class="table-wrap">
+    <table class="traffic">
+      <thead>
+        <tr>
+          <th>Timestamp</th>
+          <th>Source IP</th>
+          <th>Dest IP</th>
+          <th>Protocol</th>
+          <th>Src Port</th>
+          <th>Dst Port</th>
+          <th>Prediction</th>
+        </tr>
+        <tr class="filter-row">
+          <th><input type="text" id="filter-ts"    class="th-filter" placeholder="Filter…" title="Filter by Timestamp"></th>
+          <th><input type="text" id="filter-src"   class="th-filter" placeholder="Filter…" title="Filter by Source IP"></th>
+          <th><input type="text" id="filter-dst"   class="th-filter" placeholder="Filter…" title="Filter by Dest IP"></th>
+          <th><input type="text" id="filter-proto" class="th-filter" placeholder="Filter…" title="Filter by Protocol"></th>
+          <th><input type="text" id="filter-sport" class="th-filter" placeholder="Filter…" title="Filter by Src Port"></th>
+          <th><input type="text" id="filter-dport" class="th-filter" placeholder="Filter…" title="Filter by Dst Port"></th>
+          <th>
+            <label class="th-check-wrap">
+              <input type="checkbox" id="filter-attacks-only"> Attacks
+            </label>
+            <span class="filter-count" id="filter-count"></span>
+          </th>
+        </tr>
+      </thead>
+      <tbody id="traffic-body"></tbody>
+    </table>
+  </div>
+
+</div><!-- /page-home -->
+
+
+<!-- ─── PAGE 2 : UPLOAD CSV ───────────────────────────────────────────── -->
+<div id="page-upload" class="page">
+
+  <div class="page-header">
+    <h2 class="page-title">Upload CSV Analysis</h2>
+  </div>
+
+  <div class="upload-zone" id="drop-zone"
+       onclick="document.getElementById('csv-input').click()">
+    <input type="file" id="csv-input" accept=".csv" onchange="handleUpload(this)">
+    <div class="upload-icon">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/>
+        <line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+    </div>
+    <p class="upload-title">Drop a CSV file or click to browse</p>
+    <p class="upload-hint">15 feature columns required · Label column optional (BENIGN / DDoS)</p>
+  </div>
+
+  <div class="file-badge" id="csv-filename-display">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/>
+      <polyline points="13 2 13 9 20 9"/>
+    </svg>
+    <strong id="csv-filename-text"></strong>
+    <span class="file-rows" id="csv-filename-rows"></span>
+  </div>
+
+  <div class="spinner-wrap" id="upload-spinner" style="display:none">
+    <span class="spinner"></span>
+    <span>Analysing dataset…</span>
+  </div>
+
+  <div id="upload-results" style="display:none">
+
+    <div class="stat-row">
+      <div class="stat-card"><div class="lbl">Total Records</div><div class="val c-sky"   id="csv-total">0</div></div>
+      <div class="stat-card"><div class="lbl">Benign</div>       <div class="val c-green" id="csv-normal">0</div></div>
+      <div class="stat-card"><div class="lbl">DDoS</div>         <div class="val c-rust"  id="csv-attack">0</div></div>
+    </div>
+
+    <div id="csv-metrics"></div>
+
+    <div class="analysis-controls" id="analysis-controls" style="display:none">
+      <span class="ctrl-lbl">Analysis</span>
+      <button class="btn btn-green" id="btn-csv-toggle" onclick="toggleCsvAnalysis()">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        Play
+      </button>
+      <span class="analysis-progress" id="csv-anim-progress"></span>
+    </div>
+
+    <div id="csv-downsample-notice" class="info-notice" style="display:none"></div>
+
+    <div class="chart-wrap">
+      <div class="chart-header">
+        <span class="chart-title">Flow Packets/s — Upload</span>
+        <span class="chart-subtitle" id="csv-chart-subtitle"></span>
+      </div>
+      <div id="csv-chart-div" class="chart-div"></div>
+    </div>
+
+    <div id="csv-plots"></div>
+
+  </div>
+</div><!-- /page-upload -->
+
+
+<!-- ─── PAGE 3 : SUMMARY ───────────────────────────────────────────────── -->
+<div id="page-summary" class="page">
+  <div class="page-header">
+    <h2 class="page-title">Analysis Summary</h2>
+    <button class="btn btn-navy" onclick="loadSummary()">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="23 4 23 10 17 10"/>
+        <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/>
+      </svg>
+      Refresh
+    </button>
+  </div>
+  <div id="summary-content"></div>
+</div>
+
+
+<!-- ─── PAGE 4 : ML INFORMATION ───────────────────────────────────────── -->
+<div id="page-mlinfo" class="page">
+
+  <div class="page-header">
+    <h2 class="page-title">ML Model Information</h2>
+  </div>
+
+  <div class="section-title">Architecture — Dense MLP (Binary, 4L)</div>
+  <div class="card">
+    <table class="info-table">
+      <tr><td>Type</td>          <td>Dense Multi-Layer Perceptron (MLP) · Binary Classification</td></tr>
+      <tr><td>Task</td>          <td>BENIGN vs DDoS</td></tr>
+      <tr><td>Input Layer</td>   <td>Dense(1024, ReLU) → Dropout(0.3) → BatchNorm</td></tr>
+      <tr><td>Hidden 1</td>      <td>Dense(512, ReLU)  → Dropout(0.3) → BatchNorm</td></tr>
+      <tr><td>Hidden 2</td>      <td>Dense(256, ReLU)  → Dropout(0.3) → BatchNorm</td></tr>
+      <tr><td>Hidden 3</td>      <td>Dense(128, ReLU)  → Dropout(0.3) → BatchNorm</td></tr>
+      <tr><td>Hidden 4</td>      <td>Dense(64, ReLU)   → Dropout(0.3) → BatchNorm</td></tr>
+      <tr><td>Output Layer</td>  <td>Dense(1, Sigmoid)</td></tr>
+    </table>
+  </div>
+
+  <div class="section-title">Training Configuration</div>
+  <div class="card">
+    <table class="info-table">
+      <tr><td>Optimizer</td>      <td>Adam (lr=0.001, β₁=0.999)</td></tr>
+      <tr><td>Loss</td>           <td>BinaryCrossentropy</td></tr>
+      <tr><td>Max Epochs</td>     <td>50</td></tr>
+      <tr><td>Batch Size</td>     <td>1 024</td></tr>
+      <tr><td>Early Stopping</td> <td>Patience=10 · monitor val_loss · restore best weights</td></tr>
+      <tr><td>Normalization</td>  <td>Min-Max · custom (handles zero-std columns)</td></tr>
+      <tr><td>Data Split</td>     <td>Three separate pre-split datasets: TRAIN_CSV_PATH, VAL_CSV_PATH, TEST_CSV_PATH. Falls back to 70/15/15 synthetic split when unavailable.</td></tr>
+    </table>
+  </div>
+
+  <div class="section-title">Evaluation Metrics</div>
+  <div class="card">
+    <table class="info-table">
+      <tr><td>Sensitivity</td>       <td>TP / (TP + FN)</td></tr>
+      <tr><td>Specificity</td>       <td>TN / (TN + FP)</td></tr>
+      <tr><td>Precision</td>         <td>TP / (TP + FP)</td></tr>
+      <tr><td>Accuracy</td>          <td>(TP + TN) / (TP + TN + FP + FN)</td></tr>
+      <tr><td>F1 Score</td>          <td>2 × Precision × Sensitivity / (Precision + Sensitivity)</td></tr>
+      <tr><td>Balanced Accuracy</td> <td>(Sensitivity + Specificity) / 2</td></tr>
+      <tr><td>ROC-AUC</td>           <td>Area under the ROC Curve</td></tr>
+    </table>
+  </div>
+
+  <div class="section-title">Feature Set — 27 Features (LIME · Random Forest · Median Threshold)</div>
+  <div class="card">
+    <table class="info-table">
+      <tr><td>TCP Flags</td>         <td>URG Flag Count · SYN Flag Count · CWE Flag Count · Fwd PSH Flags</td></tr>
+      <tr><td>Packet Size</td>       <td>Fwd Packet Length Min · Bwd Packet Length Max · Bwd Packet Length Min · Bwd Packet Length Mean · Bwd Packet Length Std · Max Packet Length · Packet Length Variance</td></tr>
+      <tr><td>Flow Rate</td>         <td>Bwd Packets/s · Down/Up Ratio · Total Backward Packets · Total Length of Bwd Packets</td></tr>
+      <tr><td>Inter-Arrival</td>     <td>Flow IAT Min · Fwd IAT Min · Bwd IAT Std · Bwd IAT Max · Bwd IAT Total</td></tr>
+      <tr><td>Active / Idle</td>     <td>Active Mean · Active Std · Active Max · Idle Std · Idle Min</td></tr>
+      <tr><td>Connection</td>        <td>Init_Win_bytes_forward · Bwd Header Length</td></tr>
+    </table>
+  </div>
+
+  {% if history_img %}
+  <div class="section-title">Training History</div>
+  <div class="card" style="padding: 14px; text-align:center">
+    <img src="data:image/png;base64,{{ history_img }}"
+         style="max-width:100%;border-radius:4px;border:1px solid var(--border)">
+  </div>
+  {% endif %}
+
+</div><!-- /page-mlinfo -->
+</div><!-- /main -->
+
+
+<!-- ═══ JAVASCRIPT ══════════════════════════════════════════════════════════ -->
+<script>
+"use strict";
+
+/* ══════════════════════════════════════════════════════════════════════════
+   NAVIGATION
+   ══════════════════════════════════════════════════════════════════════════ */
+const initialPage = "{{ page }}";
+function showPage(name) {
+  document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
+  document.querySelectorAll(".nav-btn").forEach(b => b.classList.remove("active"));
+  document.getElementById("page-" + name).classList.add("active");
+  document.querySelector(`[data-page="${name}"]`).classList.add("active");
+  if (name === "summary") loadSummary();
+}
+document.querySelectorAll(".nav-btn").forEach(b =>
+  b.addEventListener("click", () => showPage(b.dataset.page)));
+showPage(initialPage);
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   INTERNET CONNECTIVITY GUARD
+   ══════════════════════════════════════════════════════════════════════════ */
+let _isOnline = navigator.onLine;
+
+function _setOnlineState(online) {
+  _isOnline = online;
+  const banner   = document.getElementById("offline-banner");
+  const btnStart = document.getElementById("btn-start");
+  if (online) {
+    banner.style.display = "none";
+    if (btnStart && !btnStart.disabled_by_capture) btnStart.disabled = false;
+  } else {
+    banner.style.display = "flex";
+    if (btnStart) btnStart.disabled = true;
+    if (pollTimer) {
+      fetch("/api/capture/stop", { method:"POST" }).catch(() => {});
+      clearInterval(pollTimer); pollTimer = null;
+      setCapStatus("stopped");
+      _resetStopBtn();
+    }
+  }
+}
+
+function _probeConnection() {
+  fetch("/api/capture/poll?since=0", { method:"GET", cache:"no-store" })
+    .then(() => _setOnlineState(true))
+    .catch(() => _setOnlineState(false));
+}
+
+window.addEventListener("online",  () => { _probeConnection(); });
+window.addEventListener("offline", () => { _setOnlineState(false); });
+_probeConnection();
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   PLOTLY CHART HELPERS  —  dark theme palette
+   ══════════════════════════════════════════════════════════════════════════ */
+
+const C_LINE   = '#4A9DC0';
+const C_NORMAL = 'rgba(30,122,66,0.80)';
+const C_ATTACK = 'rgba(201,75,42,0.90)';
+const C_ATK_BG = 'rgba(201,75,42,0.09)';
+const C_GRID   = '#EAE6DF';
+const C_TXT    = '#5A6A7A';
+
+const PLOTLY_CONFIG = {
+  responsive:    true,
+  displayModeBar:'hover',
+  displaylogo:   false,
+  modeBarButtonsToRemove: ['select2d', 'lasso2d', 'autoScale2d'],
+};
+
+function _makeLayout(xTitle, shapes) {
+  return {
+    plot_bgcolor:  '#FFFFFF',
+    paper_bgcolor: '#F9FAFB',
+    margin: {l:60, r:14, t:14, b:46, pad:2},
+    xaxis: {
+      title:    {text: xTitle, font:{size:11, color: C_TXT}},
+      gridcolor: C_GRID, linecolor:'rgba(0,0,0,0.1)', zeroline:false,
+      tickfont: {size:10, color: C_TXT},
+      showspikes:true, spikecolor: C_LINE, spikethickness:1, spikedash:'dot',
+    },
+    yaxis: {
+      title:    {text:'Flow Packets/s', font:{size:11, color: C_TXT}},
+      gridcolor: C_GRID, linecolor:'rgba(0,0,0,0.1)', zeroline:false,
+      tickfont: {size:10, color: C_TXT}, tickformat:'.3~s',
+      showspikes:true, spikecolor: C_LINE, spikethickness:1, spikedash:'dot',
+    },
+    legend: {
+      orientation:'h', x:0, y:1.04, xanchor:'left', yanchor:'bottom',
+      font:{size:10, color: C_TXT},
+      bgcolor:'rgba(255,255,255,0.9)', bordercolor:'rgba(0,0,0,0.1)', borderwidth:1,
+    },
+    hovermode:   'closest',
+    shapes:      shapes || [],
+    annotations: [],
+    autosize:    true,
+    height:      300,
+  };
+}
+
+/* Live traffic trace */
+function _buildMainTrace(xs, ys, labels, cdata, normalStr, attackStr) {
+  const colors    = labels.map(l => l === 1 ? C_ATTACK : C_NORMAL);
+  const labelStrs = labels.map(l => l === 1 ? attackStr : normalStr);
+  const cd = cdata.map((d, i) => [d[0], d[1], d[2], d[3], labelStrs[i]]);
+  return {
+    x: xs, y: ys,
+    mode: 'lines+markers', type: 'scatter', name: 'Flow Packets/s',
+    line:   {color: C_LINE, width: 1.5},
+    marker: {size: 5, color: colors, line:{width:0}},
+    customdata: cd,
+    hovertemplate:
+      '<b>%{customdata[4]}</b><br>' +
+      '<b>Instance:</b> %{x}<br>' +
+      '<b>Time:</b> %{customdata[0]}<br>' +
+      '<b>Src IP:</b> %{customdata[1]}<br>' +
+      '<b>Dst IP:</b> %{customdata[2]}<br>' +
+      '<b>Protocol:</b> %{customdata[3]}<br>' +
+      '<b>Flow Pkts/s:</b> %{y:,.0f}<br><extra></extra>',
+    showlegend: true,
+  };
+}
+
+/* CSV upload trace — includes actual label from ground-truth when available */
+function _buildCsvMainTrace(xs, ys, labels, cdata, truths) {
+  const colors    = labels.map(l => l === 1 ? C_ATTACK : C_NORMAL);
+  const predStrs  = labels.map(l => l === 1 ? 'DDoS' : 'BENIGN');
+  const truthStrs = (truths || []).map(t =>
+    t === 1 ? 'Actual: DDoS' : t === 0 ? 'Actual: BENIGN' : '');
+  const cd = cdata.map((d, i) => [d[0], d[1], d[2], d[3], predStrs[i], truthStrs[i] || '']);
+  return {
+    x: xs, y: ys,
+    mode: 'lines+markers', type: 'scatter', name: 'Flow Packets/s',
+    line:   {color: C_LINE, width: 1.5},
+    marker: {size: 5, color: colors, line:{width:0}},
+    customdata: cd,
+    hovertemplate:
+      '<b>Pred: %{customdata[4]}</b><br>' +
+      '%{customdata[5]}<br>' +
+      '<b>Instance:</b> %{x}<br>' +
+      '<b>Time:</b> %{customdata[0]}<br>' +
+      '<b>Src IP:</b> %{customdata[1]}<br>' +
+      '<b>Dst IP:</b> %{customdata[2]}<br>' +
+      '<b>Protocol:</b> %{customdata[3]}<br>' +
+      '<b>Flow Pkts/s:</b> %{y:,.0f}<br><extra></extra>',
+    showlegend: true,
+  };
+}
+
+/* Peak trace for live chart */
+function _buildPeakTrace(xs, ys, labels) {
+  let maxY = -Infinity, maxX = null;
+  for (let i = 0; i < labels.length; i++) {
+    if (labels[i] === 1 && ys[i] > maxY) { maxY = ys[i]; maxX = xs[i]; }
+  }
+  if (maxX === null) return null;
+  return {
+    x: [maxX], y: [maxY],
+    mode: 'markers', type: 'scatter', name: '⭐ Peak',
+    marker: {symbol:'star', size:14, color:'#f43f5e', line:{color:'#be123c', width:1.5}},
+    hovertemplate: '<b>Peak Attack</b><br>%{y:,.0f} Pkts/s<extra></extra>',
+    showlegend: true,
+  };
+}
+
+/* Peak trace for CSV chart — prefers actual attack label */
+function _buildCsvPeakTrace(xs, ys, labels, truths) {
+  const hasTruth = truths && truths.some(t => t === 1);
+  let maxY = -Infinity, maxX = null;
+  for (let i = 0; i < xs.length; i++) {
+    const isTarget = hasTruth ? (truths[i] === 1) : (labels[i] === 1);
+    if (isTarget && ys[i] > maxY) { maxY = ys[i]; maxX = xs[i]; }
+  }
+  if (maxX === null) return null;
+  return {
+    x: [maxX], y: [maxY],
+    mode: 'markers', type: 'scatter', name: '⭐ Peak',
+    marker: {symbol:'star', size:14, color:'#f43f5e', line:{color:'#be123c', width:1.5}},
+    hovertemplate: '<b>Peak Attack</b><br>%{y:,.0f} Pkts/s<extra></extra>',
+    showlegend: true,
+  };
+}
+
+function _attackDurationShape(x0, x1) {
+  return {
+    type:'rect', xref:'x', yref:'paper',
+    x0: x0, x1: x1, y0:0, y1:1,
+    fillcolor: C_ATK_BG, line:{width:0}, layer:'below',
+  };
+}
+
+function renderLiveChart(divId, xs, ys, labels, cdata, isNew) {
+  const mainTrace = _buildMainTrace(xs, ys, labels, cdata, 'NORMAL', 'ATTACK');
+  const layout    = _makeLayout('Instance', []);
+  if (isNew) Plotly.newPlot(divId, [mainTrace], layout, PLOTLY_CONFIG);
+  else       Plotly.react(divId, [mainTrace], layout, PLOTLY_CONFIG);
+}
+
+function renderUploadChart(divId, xs, ys, labels, cdata, truths, attackRange, isNew) {
+  const mainTrace = _buildCsvMainTrace(xs, ys, labels, cdata, truths);
+  const peakTrace = _buildCsvPeakTrace(xs, ys, labels, truths);
+  const traces    = peakTrace ? [mainTrace, peakTrace] : [mainTrace];
+
+  const shapes = [];
+  if (attackRange && attackRange.length === 2)
+    shapes.push(_attackDurationShape(attackRange[0], attackRange[1]));
+
+  const annotations = [];
+  if (peakTrace) {
+    annotations.push({
+      x: peakTrace.x[0], y: peakTrace.y[0], xref:'x', yref:'y',
+      text:'Peak', showarrow:true,
+      arrowhead:2, arrowcolor:'#be123c', arrowsize:1.1,
+      font:{size:9, color:'#f43f5e'},
+      bgcolor:'rgba(18,20,31,0.9)',
+      bordercolor:'rgba(244,63,94,0.4)', borderwidth:1, borderpad:3,
+      ay:-36, ax:0,
+    });
+  }
+
+  const layout = _makeLayout('Instance', shapes);
+  layout.annotations = annotations;
+  if (isNew) Plotly.newPlot(divId, traces, layout, PLOTLY_CONFIG);
+  else       Plotly.react(divId, traces, layout, PLOTLY_CONFIG);
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   WEB AUDIO ALARM
+   ══════════════════════════════════════════════════════════════════════════ */
+let _audioCtx    = null;
+let _lastAlarmMs = 0;
+
+function _ensureAudioCtx() {
+  if (!_audioCtx) {
+    try { _audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+    catch(e) { _audioCtx = null; }
+  } else if (_audioCtx.state === 'suspended') {
+    _audioCtx.resume().catch(() => {});
+  }
+}
+
+function playAttackAlarm() {
+  const now = Date.now();
+  if (now - _lastAlarmMs < 1500) return;
+  _lastAlarmMs = now;
+  try {
+    if (!_audioCtx || _audioCtx.state !== 'running') return;
+    const ctx  = _audioCtx;
+    const osc  = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(880, ctx.currentTime);
+    osc.frequency.setValueAtTime(660, ctx.currentTime + 0.12);
+    gain.gain.setValueAtTime(0.22, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.38);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.38);
+  } catch(e) {}
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   PAGE 1 — LIVE TRAFFIC CAPTURE
+   ══════════════════════════════════════════════════════════════════════════ */
+let liveXs         = [];
+let liveYs         = [];
+let liveLabels     = [];
+let liveCdata      = [];
+let liveInstance   = 0;
+let liveChartReady = false;
+let pollTimer      = null;
+let seenCount      = 0;
+let normalCount    = 0;
+let attackCount    = 0;
+
+const LIVE_MAX = 3000;
+
+function setCapStatus(state) {
+  const pill = document.getElementById("cap-status-pill");
+  const dot  = document.getElementById("cap-dot");
+  const txt  = document.getElementById("cap-status-txt");
+  pill.className = `status-pill status-${state}`;
+  dot.className  = `dot dot-${state}`;
+  txt.textContent = {idle:"Idle", running:"Capturing", stopped:"Stopped"}[state];
+}
+
+function _resetStopBtn() {
+  const btn = document.getElementById("btn-stop");
+  if (!btn) return;
+  btn.innerHTML =
+    '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/></svg> Stop Capturing';
+  btn.className  = "btn btn-rust";
+  btn.onclick    = captureStop;
+  btn.disabled   = true;
+}
+
+function _refreshLiveChart() {
+  const off    = Math.max(0, liveXs.length - LIVE_MAX);
+  const xs     = liveXs.slice(off);
+  const ys     = liveYs.slice(off);
+  const labels = liveLabels.slice(off);
+  const cdata  = liveCdata.slice(off);
+  renderLiveChart('live-chart-div', xs, ys, labels, cdata, !liveChartReady);
+  if (!liveChartReady) liveChartReady = true;
+  const atk = liveLabels.filter(l => l === 1).length;
+  document.getElementById("live-chart-subtitle").textContent =
+    liveXs.length > 0
+      ? `${liveXs.length.toLocaleString()} instances · ${atk.toLocaleString()} attack`
+      : '';
+}
+
+function captureStart() {
+  if (!_isOnline) {
+    document.getElementById("offline-banner").style.display = "flex";
+    return;
+  }
+  _ensureAudioCtx();
+
+  fetch("/api/capture/start", { method:"POST" }).then(() => {
+    liveXs = []; liveYs = []; liveLabels = []; liveCdata = [];
+    liveInstance = 0; liveChartReady = false;
+    seenCount = normalCount = attackCount = 0;
+
+    document.getElementById("st-total").textContent  = 0;
+    document.getElementById("st-normal").textContent = 0;
+    document.getElementById("st-attack").textContent = 0;
+    document.getElementById("traffic-body").innerHTML = "";
+    document.getElementById("save-notice").style.display = "none";
+    document.getElementById("filter-count").textContent = "";
+
+    const btnStart = document.getElementById("btn-start");
+    btnStart.disabled = true;
+    btnStart.disabled_by_capture = true;
+
+    _resetStopBtn();
+    document.getElementById("btn-stop").disabled = false;
+
+    setCapStatus("running");
+    pollTimer = setInterval(pollCapture, 700);
+  });
+}
+
+function captureStop() {
+  fetch("/api/capture/stop", { method:"POST" }).then(() => {
+    clearInterval(pollTimer); pollTimer = null;
+    const btn = document.getElementById("btn-stop");
+    btn.innerHTML =
+      '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg> Continue Capturing';
+    btn.className  = "btn btn-sky";
+    btn.onclick    = captureResume;
+    btn.disabled   = false;
+    setCapStatus("stopped");
+    _refreshLiveChart();
+  });
+}
+
+function captureResume() {
+  if (!_isOnline) {
+    document.getElementById("offline-banner").style.display = "flex";
+    return;
+  }
+  fetch("/api/capture/resume", { method:"POST" }).then(() => {
+    const btn = document.getElementById("btn-stop");
+    btn.innerHTML =
+      '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/></svg> Stop Capturing';
+    btn.className  = "btn btn-rust";
+    btn.onclick    = captureStop;
+    btn.disabled   = false;
+    setCapStatus("running");
+    pollTimer = setInterval(pollCapture, 700);
+  });
+}
+
+/* ── Live table filter ───────────────────────────────────────────────── */
+function _applyLiveFilter() {
+  const tsF     = (document.getElementById("filter-ts").value    || "").toLowerCase();
+  const srcF    = (document.getElementById("filter-src").value   || "").toLowerCase();
+  const dstF    = (document.getElementById("filter-dst").value   || "").toLowerCase();
+  const protoF  = (document.getElementById("filter-proto").value || "").toLowerCase();
+  const sportF  = (document.getElementById("filter-sport").value || "").toLowerCase();
+  const dportF  = (document.getElementById("filter-dport").value || "").toLowerCase();
+  const atkOnly = document.getElementById("filter-attacks-only").checked;
+
+  const anyActive = tsF || srcF || dstF || protoF || sportF || dportF || atkOnly;
+
+  const rows = document.getElementById("traffic-body").querySelectorAll("tr");
+  let visible = 0;
+  rows.forEach(tr => {
+    const cells = tr.querySelectorAll("td");
+    if (cells.length < 7) { tr.style.display = ""; visible++; return; }
+
+    const ts       = cells[0].textContent.toLowerCase();
+    const src      = cells[1].textContent.toLowerCase();
+    const dst      = cells[2].textContent.toLowerCase();
+    const proto    = cells[3].textContent.toLowerCase();
+    const sport    = cells[4].textContent.toLowerCase();
+    const dport    = cells[5].textContent.toLowerCase();
+    const isAttack = cells[6].querySelector(".tag-attack") !== null;
+
+    const ok = (!tsF    || ts.includes(tsF))
+            && (!srcF   || src.includes(srcF))
+            && (!dstF   || dst.includes(dstF))
+            && (!protoF || proto.includes(protoF))
+            && (!sportF || sport.includes(sportF))
+            && (!dportF || dport.includes(dportF))
+            && (!atkOnly || isAttack);
+
+    tr.style.display = ok ? "" : "none";
+    if (ok) visible++;
+  });
+
+  const total = rows.length;
+  document.getElementById("filter-count").textContent =
+    anyActive ? `${visible} / ${total}` : "";
+}
+
+["filter-ts", "filter-src", "filter-dst",
+ "filter-proto", "filter-sport", "filter-dport"].forEach(id =>
+  document.getElementById(id).addEventListener("input", _applyLiveFilter));
+document.getElementById("filter-attacks-only").addEventListener("change", _applyLiveFilter);
+
+function pollCapture() {
+  if (!_isOnline) {
+    clearInterval(pollTimer); pollTimer = null;
+    setCapStatus("stopped");
+    _resetStopBtn();
+    return;
+  }
+
+  fetch(`/api/capture/poll?since=${seenCount}`)
+    .then(r => r.json())
+    .then(data => {
+      const tbody = document.getElementById("traffic-body");
+      let batchHasAttack = false;
+
+      data.rows.forEach(row => {
+        const isAttack = row.Prediction === 1;
+        if (isAttack) { attackCount++; batchHasAttack = true; } else normalCount++;
+
+        liveXs.push(liveInstance);
+        liveYs.push(row["Flow Packets/s"] || 0);
+        liveLabels.push(isAttack ? 1 : 0);
+        const proto = row.Protocol === 6 ? "TCP" : "UDP";
+        liveCdata.push([
+          row.Timestamp,
+          row["Source IP"]      || "N/A",
+          row["Destination IP"] || "N/A",
+          proto,
+        ]);
+        liveInstance++;
+
+        const tr  = document.createElement("tr");
+        const tag = isAttack ? "tag-attack" : "tag-normal";
+        const lbl = isAttack ? "ATTACK"     : "NORMAL";
+        tr.innerHTML = `
+          <td>${row.Timestamp}</td>
+          <td>${row["Source IP"]      || "N/A"}</td>
+          <td>${row["Destination IP"] || "N/A"}</td>
+          <td>${proto}</td>
+          <td>${row["Source Port"]      || "—"}</td>
+          <td>${row["Destination Port"] || "—"}</td>
+          <td><span class="tag ${tag}">${lbl}</span></td>`;
+        tbody.insertBefore(tr, tbody.firstChild);
+      });
+
+      while (tbody.children.length > 500) tbody.removeChild(tbody.lastChild);
+
+      if (batchHasAttack) playAttackAlarm();
+
+      seenCount = data.total;
+      document.getElementById("st-total").textContent  = seenCount;
+      document.getElementById("st-normal").textContent = normalCount;
+      document.getElementById("st-attack").textContent = attackCount;
+
+      if (data.rows.length > 0) {
+        _refreshLiveChart();
+        _applyLiveFilter();
+      }
+    })
+    .catch(() => { _probeConnection(); });
+}
+
+function captureSave() {
+  fetch("/api/capture/save", { method:"POST" })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) { alert(data.error); return; }
+      const notice = document.getElementById("save-notice");
+      notice.style.display = "block";
+      notice.innerHTML =
+        `<strong>${data.count.toLocaleString()} records saved.</strong><br>
+         Raw traffic → <code>raw_live_traffic.csv</code><br>
+         With predictions → <code>analyzed_live_traffic.csv</code>`;
+      document.getElementById("page-home").scrollTop = 99999;
+    });
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   PAGE 2 — UPLOAD CSV
+   ══════════════════════════════════════════════════════════════════════════ */
+let csvPoints      = [];
+let csvAttackRange = null;
+let csvAnimIdx     = 0;
+let csvAnimRaf     = null;
+let csvAnimState   = 'idle';
+let csvChartReady  = false;
+
+let _csvXs     = [];
+let _csvYs     = [];
+let _csvLabels = [];
+let _csvCdata  = [];
+let _csvTruths = [];
+
+const CSV_BATCH = 200;
+
+function setCsvAnalysisState(state) {
+  csvAnimState = state;
+  const btn = document.getElementById("btn-csv-toggle");
+  if (!btn) return;
+  const map = {
+    idle:    { html:'<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg> Play',    cls:"btn btn-green" },
+    running: { html:'<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Pause', cls:"btn btn-rust"  },
+    paused:  { html:'<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg> Resume',  cls:"btn btn-sky"   },
+    done:    { html:'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg> Replay', cls:"btn btn-amber" },
+  };
+  const s = map[state] || map.idle;
+  btn.innerHTML  = s.html;
+  btn.className  = s.cls;
+  btn.disabled   = false;
+}
+
+function toggleCsvAnalysis() {
+  if (csvAnimState === 'idle') {
+    csvAnimIdx = 0;
+    _csvXs = []; _csvYs = []; _csvLabels = []; _csvCdata = []; _csvTruths = [];
+    csvChartReady = false;
+    if (csvAnimRaf) cancelAnimationFrame(csvAnimRaf);
+    document.getElementById("csv-anim-progress").textContent = "";
+    setCsvAnalysisState('running');
+    csvAnimRaf = requestAnimationFrame(_csvTick);
+  } else if (csvAnimState === 'paused') {
+    if (csvAnimIdx >= csvPoints.length) { setCsvAnalysisState('done'); return; }
+    setCsvAnalysisState('running');
+    csvAnimRaf = requestAnimationFrame(_csvTick);
+  } else if (csvAnimState === 'running') {
+    if (csvAnimRaf) { cancelAnimationFrame(csvAnimRaf); csvAnimRaf = null; }
+    setCsvAnalysisState('paused');
+  } else if (csvAnimState === 'done') {
+    csvAnimIdx = 0;
+    _csvXs = []; _csvYs = []; _csvLabels = []; _csvCdata = []; _csvTruths = [];
+    csvChartReady = false;
+    if (csvAnimRaf) cancelAnimationFrame(csvAnimRaf);
+    document.getElementById("csv-anim-progress").textContent = "";
+    setCsvAnalysisState('running');
+    csvAnimRaf = requestAnimationFrame(_csvTick);
+  }
+}
+
+function _csvRenderCurrent(forceNew) {
+  renderUploadChart(
+    'csv-chart-div',
+    _csvXs, _csvYs, _csvLabels, _csvCdata, _csvTruths,
+    csvAttackRange,
+    !csvChartReady || forceNew,
+  );
+  if (!csvChartReady) csvChartReady = true;
+  const ddos = _csvLabels.filter(l => l === 1).length;
+  document.getElementById("csv-chart-subtitle").textContent =
+    _csvXs.length > 0
+      ? `${_csvXs.length.toLocaleString()} / ${csvPoints.length.toLocaleString()} pts · ${ddos.toLocaleString()} DDoS`
+      : '';
+}
+
+function _csvTick() {
+  if (csvAnimState !== 'running') return;
+  const end = Math.min(csvAnimIdx + CSV_BATCH, csvPoints.length);
+  for (let i = csvAnimIdx; i < end; i++) {
+    const pt = csvPoints[i];
+    _csvXs.push(pt.x);
+    _csvYs.push(pt.y);
+    _csvLabels.push(pt.label);
+    _csvTruths.push(pt.truth !== undefined ? pt.truth : -1);
+    _csvCdata.push([pt.ts, pt.src, pt.dst, pt.proto]);
+  }
+  csvAnimIdx = end;
+  _csvRenderCurrent(false);
+  const pct = Math.round((csvAnimIdx / csvPoints.length) * 100);
+  document.getElementById("csv-anim-progress").textContent =
+    `${csvAnimIdx.toLocaleString()} / ${csvPoints.length.toLocaleString()} (${pct}%)`;
+  if (csvAnimIdx < csvPoints.length) {
+    csvAnimRaf = requestAnimationFrame(_csvTick);
+  } else {
+    setCsvAnalysisState('done');
+    document.getElementById("csv-anim-progress").textContent = "Complete";
+  }
+}
+
+function handleUpload(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append("file", file);
+
+  document.getElementById("csv-filename-text").textContent = file.name;
+  document.getElementById("csv-filename-rows").textContent = "";
+  document.getElementById("csv-filename-display").style.display = "flex";
+
+  document.getElementById("upload-spinner").style.display = "flex";
+  document.getElementById("upload-results").style.display = "none";
+
+  fetch("/api/upload", { method:"POST", body:fd })
+    .then(r => {
+      if (!r.ok) return r.text().then(txt => { throw new Error(txt || `HTTP ${r.status}`); });
+      return r.json();
+    })
+    .then(data => {
+      document.getElementById("upload-spinner").style.display = "none";
+      if (data.error) { alert("Upload error: " + data.error); return; }
+
+      document.getElementById("upload-results").style.display = "block";
+      document.getElementById("csv-filename-rows").textContent =
+        `· ${data.total.toLocaleString()} rows`;
+      document.getElementById("csv-total").textContent  = data.total.toLocaleString();
+      document.getElementById("csv-normal").textContent = data.normal.toLocaleString();
+      document.getElementById("csv-attack").textContent = data.attack.toLocaleString();
+
+      const md = document.getElementById("csv-metrics");
+      if (data.metrics) {
+        const m = data.metrics;
+        md.innerHTML = `<div class="metrics-grid">
+          ${mbox("Sensitivity",  m.Sensitivity)}
+          ${mbox("Specificity",  m.Specificity)}
+          ${mbox("Precision",    m.Precision)}
+          ${mbox("Accuracy",     m.Accuracy)}
+          ${mbox("F1 Score",     m.F1_Score)}
+          ${mbox("Balanced Acc", m.Balanced_Accuracy)}
+          ${data.roc_auc !== undefined ? mbox("ROC-AUC", data.roc_auc) : ""}
+        </div>`;
+      } else {
+        md.innerHTML = "";
+      }
+
+      const notice = document.getElementById("csv-downsample-notice");
+      if (data.downsampled) {
+        notice.style.display = "block";
+        notice.textContent =
+          `Dataset: ${data.total_pts.toLocaleString()} rows · ` +
+          `Chart: ${data.chart_points.length.toLocaleString()} sampled points · ` +
+          `Metrics use all rows.`;
+      } else {
+        notice.style.display = "none";
+      }
+
+      csvPoints      = data.chart_points || [];
+      csvAttackRange = data.attack_range || null;
+
+      if (csvAnimRaf) { cancelAnimationFrame(csvAnimRaf); csvAnimRaf = null; }
+
+      document.getElementById("analysis-controls").style.display = "flex";
+
+      csvAnimIdx = 0;
+      _csvXs = []; _csvYs = []; _csvLabels = []; _csvCdata = []; _csvTruths = [];
+      csvChartReady = false;
+      document.getElementById("csv-anim-progress").textContent = "";
+      setCsvAnalysisState('running');
+      csvAnimRaf = requestAnimationFrame(_csvTick);
+
+      let html = '<div class="plots-grid">';
+      if (data.roc_img)    html += `<img src="data:image/png;base64,${data.roc_img}" alt="ROC curve">`;
+      if (data.cm_overall) html += `<img src="data:image/png;base64,${data.cm_overall}" alt="Confusion matrix">`;
+      html += "</div>";
+      document.getElementById("csv-plots").innerHTML = html;
+    })
+    .catch(err => {
+      document.getElementById("upload-spinner").style.display = "none";
+      document.getElementById("csv-filename-rows").textContent = "· upload failed";
+      alert("Upload failed: " + err.message);
+    });
+}
+
+/* Drag & drop */
+const dz = document.getElementById("drop-zone");
+dz.addEventListener("dragover",  e => { e.preventDefault(); dz.style.borderColor = "rgba(59,130,246,0.5)"; });
+dz.addEventListener("dragleave", ()  => { dz.style.borderColor = ""; });
+dz.addEventListener("drop", e => {
+  e.preventDefault(); dz.style.borderColor = "";
+  const inp = document.getElementById("csv-input");
+  inp.files = e.dataTransfer.files; handleUpload(inp);
+});
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   PAGE 3 — SUMMARY
+   ══════════════════════════════════════════════════════════════════════════ */
+function loadSummary() {
+  fetch("/api/summary").then(r => r.json()).then(data => {
+    const el = document.getElementById("summary-content");
+    let html = "";
+    html += '<div class="section-title">Live Traffic Capture</div>';
+    html += data.live
+      ? buildLiveSummaryCard(data.live)
+      : '<div class="empty-state">No live traffic captured yet.</div>';
+    html += '<div class="section-title" style="margin-top:24px">Uploaded CSV Analysis</div>';
+    html += data.csv
+      ? buildCsvSummaryCard(data.csv)
+      : '<div class="empty-state">No CSV uploaded yet.</div>';
+    el.innerHTML = html;
+  });
+}
+
+function buildLiveSummaryCard(d) {
+  const lblNormal = d.labels ? d.labels.normal : "NORMAL";
+  const lblAttack = d.labels ? d.labels.attack : "ATTACK";
+  return `
+    <div class="stat-row">
+      <div class="stat-card"><div class="lbl">Total Instances</div>
+        <div class="val c-sky">${d.total.toLocaleString()}</div></div>
+      <div class="stat-card"><div class="lbl">${lblNormal}</div>
+        <div class="val c-green">${d.normal.toLocaleString()}</div></div>
+      <div class="stat-card"><div class="lbl">${lblAttack}</div>
+        <div class="val c-rust">${d.attack.toLocaleString()}</div></div>
+    </div>`;
+}
+
+function buildCsvSummaryCard(d) {
+  const lblNormal = d.labels ? d.labels.normal : "BENIGN";
+  const lblAttack = d.labels ? d.labels.attack : "DDoS";
+  let h = `
+    <div class="stat-row">
+      <div class="stat-card"><div class="lbl">Total</div>
+        <div class="val c-sky">${d.total.toLocaleString()}</div></div>
+      <div class="stat-card"><div class="lbl">${lblNormal}</div>
+        <div class="val c-green">${d.normal.toLocaleString()}</div></div>
+      <div class="stat-card"><div class="lbl">${lblAttack}</div>
+        <div class="val c-rust">${d.attack.toLocaleString()}</div></div>
+    </div>`;
+  if (d.Accuracy !== undefined) {
+    h += `<div class="metrics-grid">
+      ${mbox("Sensitivity",  d.Sensitivity)}
+      ${mbox("Specificity",  d.Specificity)}
+      ${mbox("Precision",    d.Precision)}
+      ${mbox("Accuracy",     d.Accuracy)}
+      ${mbox("F1 Score",     d.F1_Score)}
+      ${mbox("Balanced Acc", d.Balanced_Accuracy)}
+      ${d.ROC_AUC !== undefined ? mbox("ROC-AUC", d.ROC_AUC) : ""}
+    </div>
+    <div class="conf-row">
+      ${cbox("TP", d.TP)} ${cbox("TN", d.TN)}
+      ${cbox("FP", d.FP)} ${cbox("FN", d.FN)}
+    </div>`;
+  }
+  return h;
+}
+
+/* ── Render helpers ─────────────────────────────────────────────────── */
+function mbox(lbl, val) {
+  return `<div class="metric-box">
+    <div class="m-lbl">${lbl}</div>
+    <div class="m-val">${val}</div>
+  </div>`;
+}
+
+function cbox(lbl, val) {
+  return `<div class="conf-box">
+    <div class="c-lbl">${lbl}</div>
+    <div class="c-val">${Number(val).toLocaleString()}</div>
+  </div>`;
+}
+</script>
+</body>
+</html>
